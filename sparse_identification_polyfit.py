@@ -66,6 +66,51 @@ def weighted_multivariate_polypredict(WMP, dx=[0, 0]):
         pred[:] += coefs[i] * this_term
     return pred
 
+def get_weighted_average_coefficients(coefs, scores, n):
+    # scores are R2 ~ 0.99 range, 
+    # first set to 1-0.99 range 
+    # then log10 which makes it -1 to -3, etc.
+    # then negative which makes highest = best
+    weight = -np.log10(1-scores[:, n])
+    # now we can divide by the maximum
+    weight /= weight.max()
+    # and we can multiply it to weight higher scores more or less
+    weight = weight**2
+    weight_avg = (
+        np.sum(coefs[:,n,:] * weight[:,np.newaxis], axis=0) /
+        np.sum( weight ) 
+    )
+    return weight_avg
+
+def get_label(
+    feat_names, coefficients, 
+    threshold=0.0, N_terms_limit = None, 
+    include_next_term=True
+):
+    ind = np.argsort(abs(coefficients))[::-1]
+    feature_names = np.array(feat_names)[ind].flatten()
+    coefs = np.copy(coefficients[ind]).flatten()
+    label = "f_t = "
+    if(N_terms_limit is None):
+        N_terms_limit = 1000000
+    if(include_next_term):
+        N_terms_limit += 1
+    N_terms_count = 0
+    for ifig, (feat_name, coef) in enumerate(zip(
+        feature_names, coefs
+    )):  
+        if(abs(coef)>threshold):
+            if(ifig > 0 ):
+                label += " + "
+            if(include_next_term and N_terms_count == N_terms_limit-1):
+                label += "("
+            label += "{:.2f} ".format(coef) + feat_name
+            if(include_next_term and N_terms_count == N_terms_limit-1):
+                label += ")"
+            N_terms_count += 1
+            if(N_terms_count >= N_terms_limit): break
+    return label
+
 ###############################################################
 # Class for sparse identification using polynomial fit approach
 ###############################################################
@@ -257,7 +302,7 @@ class sparse_identifier_polyfit:
         return label
     
     def _sparse_identification(self):
-        from optimizers import STLSQ_mod
+        from optimizers import STLSQ_mod, TLLSQ
         # Set up with the necessary values
         inputs = self._calculate_weighted_terms()
         X, X_dot, U, T, feat_names = self._setup_for_SINDy(inputs)
@@ -268,7 +313,8 @@ class sparse_identifier_polyfit:
         eqns = []
         for num_terms in self.N_terms:
             lib = ps.IdentityLibrary()
-            opt = STLSQ_mod(
+            # opt = STLSQ_mod(
+            opt = TLLSQ(
                 threshold=np.power(10,0.0), 
                 alpha=1e-10, 
                 ridge_kw=dict(
