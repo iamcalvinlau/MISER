@@ -2,7 +2,7 @@ import warnings
 
 import numpy as np
 from sklearn.exceptions import ConvergenceWarning
-from sklearn.linear_model import ridge_regression, Ridge
+from sklearn.linear_model import ridge_regression, Ridge, Lasso, ElasticNet
 from sklearn.utils.validation import check_is_fitted
 
 from pysindy import BaseOptimizer, STLSQ
@@ -129,19 +129,35 @@ class STLSQ_mod(BaseOptimizer):
     def _sparse_regress(self, x, y, iterate=True):
         """Perform ridge regression for every combination and choose best"""
         kw = self.ridge_kw or {}
+        # regr_ = Ridge(self.alpha, **kw)
+        # regr_.fit(x, y);
+        # # This uses an R2 best fit
+        # score_orig = regr_.score(x, y);
+        
         score = np.zeros_like(x[0,:])
+        coef_total = np.zeros_like(score)
         coefs = []
         # Calculate the score after every possible elimination
         for i in range(score.shape[0]):
             # remove slice along second axis
             x_test = np.delete(x, i, 1)
-            ridge_ = Ridge(self.alpha, **kw)
-            ridge_.fit(x_test, y);
-            coefs.append(ridge_.coef_);
+            regr_ = Ridge(self.alpha, **kw)
+            # regr_ = Lasso(self.alpha, **kw)
+            # regr_ = ElasticNet(self.alpha, **kw)
+            regr_.fit(x_test, y);
+            coefs.append(regr_.coef_);
             # This uses an R2 best fit
-            score[i] = ridge_.score(x_test, y);
+            score[i] = regr_.score(x_test, y);
+            # This finds the average coef (normalized so that 1 is max);
+            coef_total[i] = np.sum(
+                # np.square(
+                    abs(regr_.coef_) / abs(regr_.coef_).max()
+                # )
+            )
+        # print(coef_total)
         # Choose the elimination that has the highest score
-        i_best = np.argmax(score);
+        # and highest coef total (so it doesn't want badly fitting terms)
+        i_best = np.argmax(score * coef_total);
         # Use the coefficients of that best elimination,
         # making sure to stick a zero in place of the eliminated coefficient
         coef = np.asarray(coefs[i_best]); 
@@ -192,25 +208,11 @@ class STLSQ_mod(BaseOptimizer):
                         "coefficients".format(self.threshold)
                     )
                     continue
-                # print()
-                # Initial regression + dropping last term
-                # print(ind[i], x[:, ind[i]].shape)
-                # print()
-                # coef_i = self._regress(x[:, ind[i]], y[:, i])
+                
                 coef_i = self._sparse_regress(x[:, ind[i]], y[:, i])
-                # print(coef_i.shape)
                 coef_i, ind_i = self._sparse_coefficients(
                     n_features, ind[i], coef_i, self.threshold
-                )
-                # print(coef_i.shape)
-                # print()
-                # Final regression + no term dropping
-                coef_i = self._regress(x[:, ind_i], y[:, i], iterate=False)
-                coef_i, ind_i = self._sparse_coefficients(
-                    n_features, ind_i, coef_i, self.threshold, 
-                    drop_terms=False
-                )
-                # print(coef_i)
+                )                
                 coef[i] = coef_i
                 ind[i] = ind_i
                 
